@@ -1,0 +1,54 @@
+{
+  "name": "hub-launcher",
+  "productName": "Hub",
+  "version": "1.1.0",
+  "description": "A personal dashboard that launches your work and school apps and websites and shows how they connect.",
+  "main": "main.js",
+  "license": "MIT",
+  "author": "YOUR-NAME",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR-GITHUB-USERNAME/hub.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "release": "npm version patch -m \"Release %s\" && git push --follow-tags",
+    "release:minor": "npm version minor -m \"Release %s\" && git push --follow-tags"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "hub": {
+    "macAutoInstall": false
+  },
+  "build": {
+    "appId": "com.personal.hub",
+    "productName": "Hub",
+    "files": ["main.js", "preload.js", "src/**/*", "package.json"],
+    "publish": [
+      { "provider": "github", "owner": "YOUR-GITHUB-USERNAME", "repo": "hub" }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ]
+    },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
