@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hub</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="bar">
+      <h1 class="brand">Hub</h1>
+      <input id="search" type="search" placeholder="Search, then Enter to open" autocomplete="off" aria-label="Search your items">
+      <select id="focus" aria-label="Focus on an area" hidden><option value="">Everything</option></select>
+      <div class="bar-actions">
+        <button id="btnAdd" class="primary">Add item</button>
+        <button id="btnTidy">Tidy layout</button>
+        <button id="btnFit">Fit to view</button>
+        <button id="btnData">Data</button>
+      </div>
+    </header>
+
+    <nav id="list" class="list" aria-label="All items"></nav>
+
+    <main class="stage">
+      <svg id="graph" role="application" aria-label="Map of your apps and websites. Select an item in the list to see its details."></svg>
+      <ul id="legend" class="legend"></ul>
+      <p id="hint" class="hint" hidden></p>
+      <div id="empty" class="empty" hidden>
+        <h2>Nothing here yet</h2>
+        <p>Add the apps and websites you use for work. Draw connections between them to see how they fit together.</p>
+        <div class="actions">
+          <button id="emptyAdd" class="primary">Add your first item</button>
+          <button id="emptyExamples">Load examples</button>
+        </div>
+      </div>
+    </main>
+
+    <aside id="detail" class="detail" hidden aria-label="Item details"></aside>
+
+    <footer class="foot"><span id="status">Loading…</span><span id="update"></span><span id="file" class="mono"></span></footer>
+  </div>
+
+  <dialog id="editDlg" aria-labelledby="editTitle">
+    <form id="editForm" novalidate>
+      <h2 id="editTitle">Add item</h2>
+      <div class="field">
+        <label for="f_name">Name</label>
+        <input id="f_name" maxlength="80" autocomplete="off">
+      </div>
+      <fieldset class="seg">
+        <legend>Type</legend>
+        <label><input type="radio" name="type" value="web" checked> Website</label>
+        <label><input type="radio" name="type" value="app"> Desktop app</label>
+        <label><input type="radio" name="type" value="area"> Area</label>
+      </fieldset>
+      <div class="field" id="rowUrl">
+        <label for="f_url">Web address</label>
+        <input id="f_url" placeholder="https://example.com" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="rowApp" hidden>
+        <div class="field">
+          <label for="f_win">Path on Windows</label>
+          <div class="inline"><input id="f_win" placeholder="C:\Program Files\App\app.exe" autocomplete="off" spellcheck="false"><button type="button" id="browseWin">Browse</button></div>
+        </div>
+        <div class="field">
+          <label for="f_mac">Path on Mac</label>
+          <div class="inline"><input id="f_mac" placeholder="/Applications/App.app" autocomplete="off" spellcheck="false"><button type="button" id="browseMac">Browse</button></div>
+        </div>
+        <p class="note">Fill in both if you use Hub on both systems. Hub opens the path for the computer it is running on.</p>
+      </div>
+      <div id="rowAreaNote" hidden>
+        <p class="note">An area opens nothing. It is a hub you connect apps and websites to, such as Work or School. Existing items in a group with the same name are connected for you.</p>
+        <div class="field" style="margin-top:12px">
+          <span class="lbl" id="colorLbl">Color</span>
+          <div class="swatches" id="colorChoices" role="radiogroup" aria-labelledby="colorLbl"></div>
+          <p class="note">Everything in this area uses this color.</p>
+        </div>
+      </div>
+      <div class="field">
+        <span class="lbl">Logo</span>
+        <div class="icon-row">
+          <span id="iconPreview" class="icon-preview" aria-hidden="true"></span>
+          <div class="icon-btns">
+            <button type="button" id="iconAuto">Find automatically</button>
+            <button type="button" id="iconPick">Choose image</button>
+            <button type="button" id="iconClear">Remove</button>
+          </div>
+        </div>
+        <p class="note" id="iconNote"></p>
+      </div>
+      <div class="field" id="rowGroup">
+        <label for="f_group">Group</label>
+        <input id="f_group" list="groupList" maxlength="40" placeholder="For example, Work or School" autocomplete="off">
+        <datalist id="groupList"></datalist>
+        <p class="note">If an area has the same name as the group, a new item is connected to it automatically.</p>
+      </div>
+      <div class="field">
+        <label for="f_notes">Notes</label>
+        <textarea id="f_notes" rows="3" maxlength="2000"></textarea>
+      </div>
+      <p id="formError" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button type="button" id="cancelEdit">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dataDlg" aria-labelledby="dataTitle">
+    <h2 id="dataTitle">Your data</h2>
+    <p class="note">Hub stores everything in one file. Put that file in a synced folder to share your setup between computers.</p>
+    <p class="mono path" id="dataPath"></p>
+    <p class="note" id="verLine"></p>
+    <div class="stack">
+      <button id="btnLocation">Change data file location</button>
+      <button id="btnUpdate">Check for updates</button>
+      <button id="btnExport">Export a backup</button>
+      <button id="btnImport">Import a backup</button>
+    </div>
+    <div class="actions"><button id="closeData" class="primary">Done</button></div>
+  </dialog>
+
+  <div id="toast" popover="manual" role="status" aria-live="polite"></div>
+
+  <script src="graph.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
