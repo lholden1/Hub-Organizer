@@ -5,10 +5,10 @@
   "description": "A personal dashboard that launches your work and school apps and websites and shows how they connect.",
   "main": "main.js",
   "license": "MIT",
-  "author": "YOUR-NAME",
+  "author": "lholden1",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR-GITHUB-USERNAME/hub.git"
+    "url": "https://github.com/lholden1/Hub-Organizer.git"
   },
   "scripts": {
     "start": "electron .",
@@ -40,8 +40,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "YOUR-GITHUB-USERNAME",
-        "repo": "hub"
+        "owner": "lholden1",
+        "repo": "Hub-Organizer"
       }
     ],
     "mac": {
