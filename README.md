@@ -2,6 +2,18 @@
 
 A personal dashboard that opens your work and school apps and websites, and draws how they connect. Runs on Windows and Mac, and updates itself from GitHub.
 
+## What's new in 1.2
+
+- **Click, then glide.** Click an item on the map and it is selected at once; one second later the map centers on it, so the side panel never hides it. Double-click within that second to open it (the second click cancels the glide). Dragging, scrolling or clicking elsewhere cancels it too.
+- **Crash fix when adding an app.** The automatic icon lookup now reads the icon straight from the app on a Mac, and never hands the system an invalid path. If Hub ever closes unexpectedly, **Data > Show log file** opens `hub.log`, whose last lines say what it was doing.
+- **Area backgrounds.** Each area gets a soft colored shape behind it and its items, so Work and School read as separate groups at a glance. Toggle it with **Backgrounds**.
+- **Present.** **Present** (or `P`) hides every panel for a clean full-screen map. `Esc` exits.
+- **Export image.** Saves the map, or just the focused area with its name as a title, as a PNG or a scalable SVG for slides and documents.
+- **Open all.** Select an area and choose **Open all** to launch everything in it at once, such as your whole Work setup. It asks first.
+- **Undo and redo** for every change, including deletes and moved items: `Ctrl/Cmd + Z`, and add `Shift` to redo.
+- **Keyboard shortcuts.** Press `?` for the list.
+- Long names wrap onto two lines instead of being cut off, hovering an item shows its full name, address and notes, and the legend entries are clickable to focus an area.
+
 ## What's new in 1.1
 
 - **Areas.** Make a node for *Work*, another for *School*, and connect the apps and sites that belong to each. An area opens nothing; it is just the hub the others hang off. Each area has its own color, and everything in it shares that color.
@@ -81,6 +93,7 @@ The installers are not code-signed (that costs money), so each computer warns on
 
 Details worth knowing:
 
+- **Sub-items.** To make Calendar a sub-process of Microsoft 365, select Microsoft 365, choose **Connect to...**, and click Calendar (the arrow points from parent to child). Calendar stays in the area, and the direct line from the area to Calendar is hidden because it is already reached through Microsoft 365. Remove the Microsoft 365 link and the area line comes back. Items can be nested as deep as you like.
 - Double-clicking an area, or pressing Enter in search, never opens anything. Search skips areas.
 - Renaming an area renames the group of everything in it, so colors and focus keep working.
 - Connections you remove by hand stay removed; Hub only auto-connects when an item is new or you change its group.
@@ -92,6 +105,7 @@ Details worth knowing:
 - **Open**: the Open button in the list or side panel, a double-click on a node, or type in the search box (Ctrl or Cmd + K) and press Enter to open the top match.
 - **Logos**: found automatically (a website's own icon, or an app's icon), or choose any image. Logos are stored in the data file, so they sync too.
 - **Connect**: select an item, choose **Connect to...**, then click the other item. Type a label in the side panel to say how they relate. Arrows show direction between ordinary items; links to an area have no arrow.
+- **Shortcuts**: `Ctrl/Cmd+K` search, `N` new item, `E` edit, `Enter` open, `Delete` delete, `F` fit, `P` present, `Ctrl/Cmd+Z` undo, `Esc` deselect. Press `?` anytime.
 - **Map**: drag nodes, scroll to zoom, drag the background to pan. Hexagons are areas, circles are websites, rounded squares are apps. **Tidy layout** groups each area with its items. **Fit to view** recenters.
 
 ## Use it on several computers
@@ -111,6 +125,8 @@ By default the data lives in your user profile (`hub-data.json`). **Export a bac
 - Files: `main.js` (windows, storage, launching, updates), `preload.js` (the bridge), `src/graph.js` (the map and layout), `src/app.js` (everything else), `.github/workflows/release.yml` (builds releases).
 
 ## If something goes wrong
+
+- **Hub closes by itself:** open **Data > Show log file** (or find `hub.log` in the app's data folder) and send me the last few lines.
 
 - **"Updates are not set up yet"**: the GitHub username in `package.json` is still the placeholder. Fix it, then publish a new release; installed copies need a version built with the right address.
 - **"No published release was found yet"**: the Release job on GitHub has not finished or failed. Check the Actions tab.

@@ -16,6 +16,34 @@
     return e;
   }
   const short = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+  // Wraps a name onto at most two lines instead of cutting it off, so "University of Maryland" stays readable.
+  function wrapLabel(name, max = 16) {
+    const words = String(name).trim().split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = '';
+    for (const w of words) {
+      if (!cur) cur = w;
+      else if ((cur + ' ' + w).length <= max) cur += ' ' + w;
+      else { lines.push(cur); cur = w; }
+    }
+    if (cur) lines.push(cur);
+    if (!lines.length) return [''];
+    const out = lines.slice(0, 2).map((l) => short(l, max + 2));
+    if (lines.length > 2) out[1] = short(lines.slice(1).join(' '), max + 2);
+    return out;
+  }
+  // Convex hull (monotone chain), used to draw the soft background behind an area and its items.
+  function hull(points) {
+    const p = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (p.length < 3) return p;
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lower = [];
+    for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q); }
+    const upper = [];
+    for (const q of [...p].reverse()) { while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
+    return lower.slice(0, -1).concat(upper.slice(0, -1));
+  }
+  const HALO_PAD = 54;
 
   class Graph {
     constructor(svg, handlers) {
@@ -23,6 +51,8 @@
       this.h = handlers;
       this.nodes = [];
       this.edges = [];
+      this.hidden = new Set();
+      this.showHalos = true;
       this.byId = new Map();
       this.nodeEls = new Map();
       this.edgeEls = new Map();
@@ -39,26 +69,44 @@
       marker.append(el('path', { d: 'M0 0L10 5L0 10z' }));
       defs.append(marker);
       this.root = el('g');
+      this.haloLayer = el('g', null, 'halos');
       this.edgeLayer = el('g');
       this.nodeLayer = el('g');
-      this.root.append(this.edgeLayer, this.nodeLayer);
+      this.root.append(this.haloLayer, this.edgeLayer, this.nodeLayer);
+      this.haloEls = new Map();
+      this.allEdges = [];
+      this.anim = 0;
       svg.append(defs, this.root);
       this.bind();
     }
 
     set(nodes, edges) {
       this.nodes = nodes;
-      this.edges = edges;
+      this.allEdges = edges;
+      // Links from an area to an item that is already reached through another item are not drawn.
+      this.hidden = Graph.redundantAreaLinks(nodes, edges);
+      this.edges = edges.filter((e) => !this.hidden.has(e.id));
       this.render();
     }
 
     render() {
       this.edgeLayer.replaceChildren();
       this.nodeLayer.replaceChildren();
+      this.haloLayer.replaceChildren();
+      this.haloEls.clear();
       this.nodeEls.clear();
       this.edgeEls.clear();
       this.byId = new Map(this.nodes.map((n) => [n.id, n]));
 
+      for (const n of this.nodes) {
+        if (n.type !== 'area') continue;
+        const path = el('path', { fill: 'none', 'stroke-width': HALO_PAD * 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, 'halo');
+        const c = this.colorOf(n);
+        path.setAttribute('stroke', c);
+        path.setAttribute('fill', c);
+        this.haloLayer.append(path);
+        this.haloEls.set(n.id, path);
+      }
       for (const e of this.edges) {
         const ends = [this.byId.get(e.from), this.byId.get(e.to)];
         const g = el('g', null, ends.some((n) => n && n.type === 'area') ? 'edge member' : 'edge');
@@ -81,7 +129,15 @@
         const color = this.colorOf(n);
         shape.setAttribute('fill', color);
         const label = el('text', { y: r + 17 }, 'label');
-        label.textContent = short(n.name, 20);
+        wrapLabel(n.name, n.type === 'area' ? 18 : 16).forEach((line, i) => {
+          const t = el('tspan', { x: 0, dy: i === 0 ? 0 : 15 });
+          t.textContent = line;
+          label.append(t);
+        });
+        const tip = el('title');
+        const detail = n.type === 'web' ? n.url : n.type === 'app' ? '' : 'Area';
+        tip.textContent = [n.name, detail, (n.notes || '').slice(0, 140)].filter(Boolean).join('\n');
+        g.append(tip);
         if (n.icon) {
           // Logo on white, ringed in the group color so grouping stays visible.
           g.classList.add('has-icon');
@@ -110,7 +166,30 @@
       this.applyView();
     }
 
+    // Draws the soft background behind each area: its own node plus the items in its group or linked to it.
+    updateHalos() {
+      for (const [id, path] of this.haloEls) {
+        const area = this.byId.get(id);
+        if (!area) continue;
+        const members = new Set([id]);
+        const key = (area.name || '').toLowerCase();
+        for (const n of this.nodes) if (n.type !== 'area' && (n.group || '').toLowerCase() === key) members.add(n.id);
+        for (const e of this.allEdges) {
+          if (e.from === id) members.add(e.to);
+          else if (e.to === id) members.add(e.from);
+        }
+        const pts = [...members].map((m) => this.byId.get(m)).filter((n) => n && n.type !== 'area' || (n && n.id === id)).flatMap((n) => [[n.x || 0, n.y || 0], [n.x || 0, (n.y || 0) + 24]]); // the second point makes room for the label below
+        const h = hull(pts);
+        let d;
+        if (h.length === 1) d = `M${h[0][0]} ${h[0][1]}l0.01 0`;
+        else if (h.length === 2) d = `M${h[0][0]} ${h[0][1]}L${h[1][0]} ${h[1][1]}`;
+        else d = 'M' + h.map((q) => `${q[0].toFixed(1)} ${q[1].toFixed(1)}`).join('L') + 'Z';
+        path.setAttribute('d', d);
+      }
+    }
+
     updatePositions() {
+      this.updateHalos();
       for (const n of this.nodes) {
         const g = this.nodeEls.get(n.id);
         if (g) g.setAttribute('transform', `translate(${n.x || 0} ${n.y || 0})`);
@@ -145,6 +224,7 @@
           if (e.to === focus) near.add(e.from);
         }
       }
+      for (const [id, path] of this.haloEls) path.classList.toggle('dim', !!this.matches && !this.matches.has(id));
       for (const [id, g] of this.nodeEls) {
         const dim = (near && !near.has(id)) || (this.matches && !this.matches.has(id));
         g.classList.toggle('dim', !!dim);
@@ -161,6 +241,7 @@
       }
     }
 
+    setHalos(on) { this.showHalos = !!on; this.haloLayer.style.display = on ? '' : 'none'; }
     setSelected(id) { this.selected = id; this.applyState(); }
     setLinkFrom(id) { this.linkFrom = id; this.svg.classList.toggle('linking', !!id); this.applyState(); }
     setMatches(set) { this.matches = set; this.applyState(); }
@@ -171,11 +252,23 @@
       this.root.setAttribute('transform', `translate(${v.x} ${v.y}) scale(${v.k})`);
     }
 
+    // True when the item is on screen with a little room to spare (used to decide whether to recenter at once).
+    isVisible(id, margin = 36) {
+      const n = this.byId.get(id);
+      if (!n) return false;
+      const r = this.svg.getBoundingClientRect();
+      const x = this.view.x + n.x * this.view.k;
+      const y = this.view.y + n.y * this.view.k;
+      return x > margin && y > margin && x < r.width - margin && y < r.height - margin;
+    }
+    stopAnim() { this.anim++; }
     animateTo(t, ms = 260) {
+      const token = ++this.anim;
       if (reduceMotion || !ms) { this.view = { ...t }; this.applyView(); return; }
       const s = { ...this.view };
       const t0 = performance.now();
       const step = (now) => {
+        if (token !== this.anim) return; // the person started panning or zooming: stop gliding
         const p = Math.min(1, (now - t0) / ms);
         const e = 1 - Math.pow(1 - p, 3);
         this.view = { x: s.x + (t.x - s.x) * e, y: s.y + (t.y - s.y) * e, k: s.k + (t.k - s.k) * e };
@@ -194,7 +287,7 @@
       for (const n of list) {
         const q = rad(n);
         x0 = Math.min(x0, n.x - q); x1 = Math.max(x1, n.x + q);
-        y0 = Math.min(y0, n.y - q); y1 = Math.max(y1, n.y + q + 26);
+        y0 = Math.min(y0, n.y - q); y1 = Math.max(y1, n.y + q + 40);
       }
       const pad = 60;
       const bw = x1 - x0 + pad * 2;
@@ -225,6 +318,8 @@
 
       svg.addEventListener('pointerdown', (ev) => {
         if (ev.button !== 0) return;
+        this.stopAnim();
+        if (this.h.onInteract) this.h.onInteract();
         const g = ev.target.closest('.node');
         svg.setPointerCapture(ev.pointerId);
         if (g) {
@@ -286,6 +381,8 @@
 
       svg.addEventListener('wheel', (ev) => {
         ev.preventDefault();
+        this.stopAnim();
+        if (this.h.onInteract) this.h.onInteract();
         const r = svg.getBoundingClientRect();
         const mx = ev.clientX - r.left;
         const my = ev.clientY - r.top;
@@ -299,7 +396,114 @@
     }
 
     // Force-directed layout. Nodes in opts.pinned stay where they are.
+    // A clean, standalone SVG of the map (no selection or dimming), for exporting to slides and documents.
+    // `only` limits it to some node ids (the focused area); `title` adds a heading in the top-left corner.
+    toSVG(only, title) {
+      const keep = only && only.size ? only : null;
+      const list = this.nodes.filter((n) => !keep || keep.has(n.id));
+      if (!list.length) return null;
+      const PAD = HALO_PAD + 24;
+      const head = title ? 54 : 0;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const n of list) {
+        x0 = Math.min(x0, n.x - PAD); x1 = Math.max(x1, n.x + PAD);
+        y0 = Math.min(y0, n.y - PAD); y1 = Math.max(y1, n.y + PAD + 24);
+      }
+      y0 -= head;
+      const w = Math.round(x1 - x0);
+      const h = Math.round(y1 - y0);
+
+      const root = this.root.cloneNode(true);
+      root.removeAttribute('transform');
+      const [haloL, edgeL, nodeL] = [...root.children];
+      [...this.haloEls.keys()].forEach((id, i) => { if ((keep && !keep.has(id)) || !this.showHalos) haloL.children[i].setAttribute('data-drop', '1'); });
+      this.edges.forEach((e, i) => { if (keep && !(keep.has(e.from) && keep.has(e.to))) edgeL.children[i].setAttribute('data-drop', '1'); });
+      [...nodeL.children].forEach((g) => { if (keep && !keep.has(g.dataset.id)) g.setAttribute('data-drop', '1'); });
+      root.querySelectorAll('[data-drop]').forEach((x) => x.remove());
+      root.querySelectorAll('.dim, .selected, .hot, .linksrc').forEach((x) => x.classList.remove('dim', 'selected', 'hot', 'linksrc'));
+      root.querySelectorAll('title').forEach((x) => x.remove());
+
+      // Copy the map's styles, with the theme colors filled in so the file looks the same anywhere.
+      const cs = getComputedStyle(document.documentElement);
+      const val = (v) => cs.getPropertyValue(v).trim();
+      const css = [];
+      for (const sheet of document.styleSheets) {
+        let rules;
+        try { rules = sheet.cssRules; } catch { continue; }
+        for (const r of rules) {
+          if (r.selectorText && /\.(node|edge|halo)\b|#arrow/.test(r.selectorText)) {
+            css.push(r.cssText.replace(/var\((--[\w-]+)\)/g, (m, name) => val(name) || m));
+          }
+        }
+      }
+      const ser = new XMLSerializer();
+      const bg = val('--bg') || '#ffffff';
+      const ink = val('--ink') || '#000000';
+      const titleEl = title
+        ? `<text x="${Math.round(x0 + 28)}" y="${Math.round(y0 + 40)}" fill="${ink}" font-size="26" font-weight="700" font-family="${(val('--font') || 'sans-serif').replace(/"/g, "'")}">${String(title).replace(/[<>&"]/g, '')}</text>`
+        : '';
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + [Math.round(x0), Math.round(y0), w, h].join(' ') + '" width="' + w + '" height="' + h + '">'
+        + '<style><![CDATA[' + css.join('\n') + ']]></style>'
+        + ser.serializeToString(this.svg.querySelector('defs').cloneNode(true))
+        + `<rect x="${Math.round(x0)}" y="${Math.round(y0)}" width="${w}" height="${h}" fill="${bg}"/>`
+        + titleEl
+        + ser.serializeToString(root)
+        + '</svg>';
+      return { svg, width: w, height: h };
+    }
+
+    // An item can belong to an area directly, or hang off another item of that area (Calendar under Microsoft 365).
+    // In the second case the straight line from the area is redundant. Returns the ids of those links.
+    // An arrow means "parent to child", so the child's own link to the area is the one that is hidden.
+    static redundantAreaLinks(nodes, edges) {
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+      const hidden = new Set();
+      for (const area of nodes) {
+        if (area.type !== 'area') continue;
+        const direct = new Map(); // item id -> its link to this area
+        for (const e of edges) {
+          const other = e.from === area.id ? e.to : e.to === area.id ? e.from : null;
+          const o = other && byId.get(other);
+          if (o && o.type !== 'area' && !direct.has(o.id)) direct.set(o.id, e);
+        }
+        if (direct.size < 2) continue;
+        const kids = new Map();
+        const hasParent = new Set();
+        for (const e of edges) {
+          if (e.from === e.to || !direct.has(e.from) || !direct.has(e.to)) continue;
+          if (!kids.has(e.from)) kids.set(e.from, []);
+          kids.get(e.from).push(e.to);
+          hasParent.add(e.to);
+        }
+        const kept = new Set();
+        const covered = new Set();
+        const cover = (start) => {
+          const stack = [start];
+          while (stack.length) {
+            for (const c of kids.get(stack.pop()) || []) {
+              if (!kept.has(c) && !covered.has(c)) { covered.add(c); stack.push(c); }
+            }
+          }
+        };
+        const roots = [...direct.keys()].filter((id) => !hasParent.has(id));
+        roots.forEach((id) => kept.add(id));
+        roots.forEach(cover);
+        // Items that only point at each other in a loop still need one link to the area.
+        const rest = [...direct.keys()].filter((id) => !kept.has(id) && !covered.has(id))
+          .sort((a, b) => (byId.get(a).name || '').localeCompare(byId.get(b).name || '') || (a < b ? -1 : 1));
+        for (const id of rest) {
+          if (kept.has(id) || covered.has(id)) continue;
+          kept.add(id);
+          cover(id);
+        }
+        for (const id of covered) hidden.add(direct.get(id).id);
+      }
+      return hidden;
+    }
+
     static layout(nodes, edges, opts = {}) {
+      const hiddenLinks = Graph.redundantAreaLinks(nodes, edges);
+      edges = edges.filter((e) => !hiddenLinks.has(e.id));
       const pinned = opts.pinned || new Set();
       const groups = [...new Set(nodes.map((n) => n.group || ''))];
       // Space the clusters by how big the largest one is, so neighbours do not overlap.

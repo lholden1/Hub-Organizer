@@ -2,10 +2,32 @@
 const { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const pkg = require('./package.json');
 
 const OS = process.platform === 'darwin' ? 'mac' : 'win';
 const OS_NAME = OS === 'mac' ? 'Mac' : 'Windows';
+
+// ---------- log & crash safety ----------
+// hub.log (in the data folder of the app) records problems and the last risky step, so if Hub ever closes
+// unexpectedly the last lines say what it was doing.
+let logFile = null;
+function log(msg) {
+  try {
+    if (!logFile) logFile = path.join(app.getPath('userData'), 'hub.log');
+    try { if (fs.statSync(logFile).size > 200000) fs.writeFileSync(logFile, ''); } catch { /* new file */ }
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    fs.appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`);
+  } catch { /* logging must never cause a problem */ }
+}
+let shownProblem = false;
+process.on('uncaughtException', (e) => {
+  log('uncaughtException: ' + ((e && e.stack) || e));
+  if (shownProblem) return;
+  shownProblem = true;
+  try { dialog.showErrorBox('Hub ran into a problem', 'Hub kept running, but something went wrong:\n\n' + String((e && e.message) || e).slice(0, 300) + '\n\nDetails are saved in hub.log (Data > Show log file).'); } catch { /* ignore */ }
+});
+process.on('unhandledRejection', (e) => log('unhandledRejection: ' + ((e && e.stack) || e)));
 
 let win = null;
 let config = { dataFile: null };
@@ -263,12 +285,48 @@ ipcMain.handle('icon:favicon', async (_e, rawUrl) => {
   return null;
 });
 
+// On a Mac the icon is read straight from the app bundle (Contents/Resources/*.icns). Asking the system for a
+// file icon (app.getFileIcon) is documented as unsupported for the "large" size on macOS and is the one native
+// call involved in adding an app, so it is not used there.
+const run = (cmd, args) => new Promise((resolve, reject) => {
+  execFile(cmd, args, { timeout: 4000 }, (err, out) => (err ? reject(err) : resolve(String(out))));
+});
+async function macAppIcon(file) {
+  const bundle = file.replace(/\/+$/, '');
+  if (!/\.app$/i.test(bundle) || !fs.statSync(bundle).isDirectory()) return null;
+  const contents = path.join(bundle, 'Contents');
+  const resources = path.join(contents, 'Resources');
+  const names = [];
+  try {
+    const n = (await run('/usr/bin/plutil', ['-extract', 'CFBundleIconFile', 'raw', '-o', '-', path.join(contents, 'Info.plist')])).trim();
+    if (n) names.push(/\.icns$/i.test(n) ? n : n + '.icns');
+  } catch { /* some bundles do not name an icon file */ }
+  try {
+    const base = path.basename(bundle, '.app').toLowerCase();
+    const found = fs.readdirSync(resources).filter((f) => /\.icns$/i.test(f));
+    found.sort((a, b) => Number(!a.toLowerCase().startsWith(base)) - Number(!b.toLowerCase().startsWith(base)) || a.localeCompare(b));
+    names.push(...found);
+  } catch { /* no Resources folder */ }
+  for (const name of [...new Set(names)]) {
+    const icon = toIconDataUrl(nativeImage.createFromPath(path.join(resources, path.basename(name))));
+    if (icon) return icon;
+  }
+  return null;
+}
+
 ipcMain.handle('icon:app', async (_e, p) => {
   try {
     const file = str(p).trim();
-    if (!file) return null;
-    return toIconDataUrl(await app.getFileIcon(file, { size: 'large' }));
-  } catch {
+    // Only look up things that exist; never hand the system a made-up path.
+    if (!file || file.length > 1000 || !path.isAbsolute(file) || !fs.existsSync(file)) return null;
+    log('icon lookup: ' + file);
+    const icon = OS === 'mac'
+      ? await macAppIcon(file)
+      : toIconDataUrl(await app.getFileIcon(file, { size: process.platform === 'win32' ? 'large' : 'normal' }));
+    log('icon lookup done: ' + (icon ? 'found' : 'none'));
+    return icon;
+  } catch (e) {
+    log('icon lookup failed: ' + (e && e.message));
     return null;
   }
 });
@@ -291,6 +349,36 @@ ipcMain.handle('icon:pick', async () => {
   } catch {
     return { error: 'Could not read that image.' };
   }
+});
+
+// ---------- export & log ----------
+ipcMain.handle('image:save', async (_e, d) => {
+  try {
+    const name = str(d && d.name).replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'Hub map';
+    const r = await dialog.showSaveDialog(win, {
+      defaultPath: path.join(app.getPath('pictures'), name + '.png'),
+      filters: [{ name: 'PNG image', extensions: ['png'] }, { name: 'SVG (scalable, for slides)', extensions: ['svg'] }],
+    });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    if (/\.svg$/i.test(r.filePath)) {
+      const svg = str(d && d.svg);
+      if (!svg.startsWith('<svg') || svg.length > 20000000) return { ok: false, error: 'Could not create the SVG.' };
+      fs.writeFileSync(r.filePath, svg);
+    } else {
+      const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(str(d && d.png));
+      if (!m) return { ok: false, error: 'Could not create the image.' };
+      fs.writeFileSync(r.filePath, Buffer.from(m[1], 'base64'));
+    }
+    return { ok: true, file: r.filePath };
+  } catch (e) {
+    log('image save failed: ' + (e && e.message));
+    return { ok: false, error: 'Could not save the image: ' + (e && e.message) };
+  }
+});
+ipcMain.handle('app:show-log', () => {
+  log('log opened by user');
+  if (logFile) shell.showItemInFolder(logFile);
+  return logFile;
 });
 
 // ---------- updates (GitHub releases) ----------
@@ -411,7 +499,14 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
   win.on('closed', () => { win = null; });
+  win.webContents.on('render-process-gone', (_e, d) => {
+    log('render-process-gone: ' + JSON.stringify(d));
+    // Recover instead of leaving a dead window. Saved data is on disk; only the last fraction of a second is at risk.
+    if (win && !win.isDestroyed() && d.reason !== 'clean-exit') setTimeout(() => { try { win.webContents.reload(); } catch { /* ignore */ } }, 300);
+  });
+  win.webContents.on('unresponsive', () => log('window unresponsive'));
 }
+app.on('child-process-gone', (_e, d) => log('child-process-gone: ' + JSON.stringify(d)));
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -424,6 +519,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(() => {
     loadConfig();
+    log(`Hub ${app.getVersion()} started on ${process.platform} (Electron ${process.versions.electron})`);
     setupUpdater();
     createWindow();
     scheduleUpdateChecks();

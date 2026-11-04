@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('hub', {
   appIcon: (p) => ipcRenderer.invoke('icon:app', p),
   pickImage: () => ipcRenderer.invoke('icon:pick'),
   onExternalChange: (cb) => ipcRenderer.on('data:external-change', () => cb()),
+  saveImage: (d) => ipcRenderer.invoke('image:save', d),
+  showLog: () => ipcRenderer.invoke('app:show-log'),
   version: () => ipcRenderer.invoke('app:version'),
   checkUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
