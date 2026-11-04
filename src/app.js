@@ -49,12 +49,32 @@
     : h('span', { class: 'swatch ' + shapeClass(n), style: `background:${groupColor(n.group)}` }));
 
   const graph = new Graph($('#graph'), {
-    onSelect: (id) => select(id),
-    onLaunch: (id) => { const n = byId(id); if (n && n.type !== 'area') launch(n); },
+    onSelect: (id) => { select(id); centerSoon(id); },
+    onLaunch: (id) => { cancelCenter(); const n = byId(id); if (n && n.type !== 'area') launch(n); },
     onMove: () => scheduleSave(),
     onLinkTarget: (id) => finishLink(id),
-    onBackground: () => { if (!linkFrom) select(null); },
+    onBackground: () => { cancelCenter(); if (!linkFrom) select(null); },
+    onInteract: () => cancelCenter(),
   });
+
+  // Clicking an item on the map selects it right away and, a moment later, glides the map to center it.
+  // The pause leaves time to double-click to open it, and the second click cancels the glide. Dragging,
+  // scrolling or clicking elsewhere cancels it too. Items the side panel would hide are centered at once.
+  const CENTER_DELAY_MS = 1000;
+  let centerTimer = null;
+  function cancelCenter() { if (centerTimer) { clearTimeout(centerTimer); centerTimer = null; } }
+  function centerSoon(id) {
+    cancelCenter();
+    requestAnimationFrame(() => {
+      if (selectedId !== id) return;
+      if (!graph.isVisible(id)) { graph.centerOn(id); return; }
+      centerTimer = setTimeout(() => {
+        centerTimer = null;
+        if (selectedId !== id || linkFrom || document.querySelector('dialog[open]')) return;
+        graph.centerOn(id);
+      }, CENTER_DELAY_MS - 20);
+    });
+  }
   graph.colorOf = (n) => groupColor(n.group);
 
   // ---------- feedback ----------
@@ -76,7 +96,42 @@
   function setStatus(msg) { $('#status').textContent = msg; }
 
   // ---------- persistence ----------
-  function scheduleSave() {
+  // Undo and redo keep snapshots of the map (items, positions and connections).
+  const MAX_HISTORY = 60;
+  let past = [];
+  let future = [];
+  let baseline = '';
+  const snap = () => JSON.stringify({ nodes: state.nodes, edges: state.edges });
+  function markBaseline() { baseline = snap(); past = []; future = []; }
+  function recordChange(skip) {
+    const cur = snap();
+    if (cur === baseline) return;
+    if (!skip) { past.push(baseline); if (past.length > MAX_HISTORY) past.shift(); future = []; }
+    baseline = cur;
+  }
+  function restore(json) {
+    const d = JSON.parse(json);
+    applyData({ nodes: d.nodes, edges: d.edges });
+    graph.fit(focusSet());
+    scheduleSave(true);
+  }
+  function undo() {
+    if (!past.length) { toast('Nothing to undo.'); return; }
+    future.push(baseline);
+    baseline = past.pop();
+    restore(baseline);
+    toast('Undone. Press ' + (OS === 'mac' ? '⌘⇧Z' : 'Ctrl+Shift+Z') + ' to redo.');
+  }
+  function redo() {
+    if (!future.length) { toast('Nothing to redo.'); return; }
+    past.push(baseline);
+    baseline = future.pop();
+    restore(baseline);
+    toast('Redone.');
+  }
+
+  function scheduleSave(skipHistory) {
+    recordChange(!!skipHistory);
     clearTimeout(saveTimer);
     setStatus('Saving…');
     saveTimer = setTimeout(async () => {
@@ -131,17 +186,25 @@
   }
 
   const matchesQuery = (n, q) => [n.name, n.group, n.url, n.notes].some((s) => (s || '').toLowerCase().includes(q));
-  // Focus on one area: that area, what it connects to, and anything in its group.
+  // Everything that belongs to an area: items in its group, items linked to it, and items nested under those
+  // (an arrow means parent to child). Areas themselves are never members.
+  function areaMembers(area) {
+    const out = [];
+    const seen = new Set();
+    const add = (n) => { if (n && n.type !== 'area' && !seen.has(n.id)) { seen.add(n.id); out.push(n); } };
+    for (const n of state.nodes) if (sameName(n.group, area.name)) add(n);
+    for (const e of state.edges) {
+      if (e.from === area.id) add(byId(e.to));
+      else if (e.to === area.id) add(byId(e.from));
+    }
+    for (let i = 0; i < out.length; i++) for (const e of state.edges) if (e.from === out[i].id) add(byId(e.to));
+    return out;
+  }
+  // Focus on one area: the area and everything that belongs to it.
   const focusSet = () => {
     const a = byId(focusId);
     if (!a || a.type !== 'area') return null;
-    const set = new Set([a.id]);
-    for (const e of state.edges) {
-      if (e.from === a.id) set.add(e.to);
-      if (e.to === a.id) set.add(e.from);
-    }
-    for (const n of state.nodes) if (n.group && n.group === a.group) set.add(n.id);
-    return set;
+    return new Set([a.id, ...areaMembers(a).map((n) => n.id)]);
   };
   const visibleSet = () => {
     const f = focusSet();
@@ -180,7 +243,12 @@
 
   function renderLegend() {
     const groups = [...new Set(state.nodes.map((n) => n.group || ''))].sort();
-    const items = groups.map((g) => h('li', {}, h('span', { class: 'swatch ci', style: `background:${groupColor(g)}` }), g || 'No group'));
+    const items = groups.map((g) => {
+      const swatch = h('span', { class: 'swatch ci', style: `background:${groupColor(g)}` });
+      const area = areaFor(g);
+      if (!area) return h('li', {}, swatch, g || 'No group');
+      return h('li', {}, h('button', { title: `Focus on ${area.name}`, onclick: () => { const sel = $('#focus'); sel.value = area.id; sel.dispatchEvent(new Event('change')); } }, swatch, g));
+    });
     if (items.length) {
       items.push(h('li', { class: 'sep' }));
       items.push(h('li', {}, h('span', { class: 'swatch ci', style: 'background:var(--muted)' }), 'Website'));
@@ -214,15 +282,17 @@
     box.hidden = !n;
     if (!n) return;
     const target = targetOf(n);
-    const links = state.edges.filter((e) => e.from === n.id || e.to === n.id);
+    const links = state.edges.filter((e) => (e.from === n.id || e.to === n.id) && !graph.hidden.has(e.id));
     const parts = [
       h('div', { class: 'd-head' },
         badge(n),
         h('div', {}, h('h2', {}, n.name), h('p', { class: 'muted' }, (n.type === 'app' ? 'Desktop app' : n.type === 'area' ? 'Area' : 'Website') + (n.type !== 'area' && n.group ? ' in ' + n.group : '')))),
       h('div', { class: 'd-actions' },
-        n.type === 'area' ? null : h('button', { class: 'primary', onclick: () => launch(n) }, 'Open'),
+        n.type === 'area'
+          ? (openable(n).length ? h('button', { class: 'primary', onclick: () => openAll(n) }, `Open all (${openable(n).length})`) : null)
+          : h('button', { class: 'primary', onclick: () => launch(n) }, 'Open'),
         h('button', { onclick: () => openEdit(n) }, 'Edit'),
-        h('button', { class: n.type === 'area' ? 'primary' : '', onclick: startLink }, 'Connect to…')),
+        h('button', { onclick: startLink }, 'Connect to…')),
       n.type === 'area'
         ? h('p', { class: 'muted' }, 'An area opens nothing. Connect the apps and websites that belong to it.')
         : h('dl', {}, h('dt', {}, n.type === 'web' ? 'Address' : `Path on ${OS_NAME}`),
@@ -247,6 +317,7 @@
 
   // ---------- actions ----------
   function select(id) {
+    cancelCenter();
     selectedId = id;
     linkFrom = null;
     graph.setLinkFrom(null);
@@ -254,6 +325,24 @@
     renderList();
     renderDetail();
     updateHint();
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Items of an area that can be opened on this computer, in name order.
+  const openable = (area) => areaMembers(area).filter((n) => targetOf(n)).sort((a, b) => a.name.localeCompare(b.name));
+  async function openAll(area) {
+    const items = openable(area);
+    if (!items.length) { toast(`Nothing in “${area.name}” can be opened on ${OS_NAME}.`, true); return; }
+    const list = items.slice(0, 8).map((n) => '• ' + n.name).join('\n') + (items.length > 8 ? `\n• …and ${items.length - 8} more` : '');
+    if (!confirm(`Open ${items.length} item${items.length === 1 ? '' : 's'} from “${area.name}”?\n\n${list}`)) return;
+    let failed = 0;
+    for (const n of items) {
+      const r = await hub.launch(n);
+      if (!r.ok) failed++;
+      await sleep(350);
+    }
+    if (failed) toast(`Opened ${items.length - failed} of ${items.length}. ${failed} could not be opened.`, true);
+    else toast(`Opened ${items.length} item${items.length === 1 ? '' : 's'} from “${area.name}”.`);
   }
 
   async function launch(n) {
@@ -288,7 +377,7 @@
   }
 
   function remove(n) {
-    if (!confirm(`Delete “${n.name}” and its connections? This cannot be undone.`)) return;
+    if (!confirm(`Delete “${n.name}” and its connections?\n\nYou can undo this with ${OS === 'mac' ? '⌘Z' : 'Ctrl+Z'}.`)) return;
     state.nodes = state.nodes.filter((x) => x !== n);
     state.edges = state.edges.filter((e) => e.from !== n.id && e.to !== n.id);
     graph.set(state.nodes, state.edges);
@@ -406,7 +495,7 @@
         n.icon = icon;
         graph.render();
         renderAll();
-        scheduleSave();
+        scheduleSave(true);
       }
     } catch { /* logos are optional */ }
   }
@@ -502,7 +591,7 @@
   // ---------- toolbar, search, keys ----------
   $('#btnAdd').addEventListener('click', () => openEdit(null));
   $('#emptyAdd').addEventListener('click', () => openEdit(null));
-  $('#btnFit').addEventListener('click', () => graph.fit());
+  $('#btnFit').addEventListener('click', () => graph.fit(focusSet()));
   $('#btnTidy').addEventListener('click', () => {
     if (!state.nodes.length) return;
     Graph.layout(state.nodes, state.edges);
@@ -568,15 +657,100 @@
     }
   });
   document.addEventListener('keydown', (ev) => {
-    if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') {
+    const mod = ev.metaKey || ev.ctrlKey;
+    const key = ev.key.toLowerCase();
+    if (mod && key === 'k') {
       ev.preventDefault();
+      if (present) setPresent(false);
       $('#search').focus();
       $('#search').select();
-    } else if (ev.key === 'Escape' && !document.querySelector('dialog[open]')) {
-      if (linkFrom) { linkFrom = null; graph.setLinkFrom(null); updateHint(); }
+      return;
+    }
+    if (document.querySelector('dialog[open]')) return;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName) || ev.target.isContentEditable;
+    if (mod && !typing && (key === 'z' || key === 'y')) {
+      ev.preventDefault();
+      if (key === 'y' || ev.shiftKey) redo(); else undo();
+      return;
+    }
+    if (typing || mod || ev.altKey) return;
+    const n = byId(selectedId);
+    const onButton = ev.target.tagName === 'BUTTON' || ev.target.tagName === 'A';
+    if (ev.key === 'Escape') {
+      if (present) setPresent(false);
+      else if (linkFrom) { linkFrom = null; graph.setLinkFrom(null); updateHint(); }
       else if (selectedId) select(null);
+    } else if (ev.key === 'Enter' && n && n.type !== 'area' && !onButton) {
+      launch(n);
+    } else if ((ev.key === 'Delete' || ev.key === 'Backspace') && n) {
+      ev.preventDefault();
+      remove(n);
+    } else if (key === 'n' && !present) { openEdit(null); ev.preventDefault();
+    } else if (key === 'e' && n && !present) { openEdit(n); ev.preventDefault();
+    } else if (key === 'f') { graph.fit(focusSet());
+    } else if (key === 'p') { setPresent(!present);
+    } else if (ev.key === '/' && !present) { ev.preventDefault(); $('#search').focus();
+    } else if (ev.key === '?') { $('#helpDlg').showModal(); }
+  });
+
+  // ---------- map tools: backgrounds, presentation, image export, help ----------
+  const pref = {
+    get(k, d) { try { const v = localStorage.getItem('hub.' + k); return v === null ? d : v === '1'; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem('hub.' + k, v ? '1' : '0'); } catch { /* preferences are optional */ } },
+  };
+  function setHalos(on) {
+    graph.setHalos(on);
+    $('#btnHalos').setAttribute('aria-pressed', String(on));
+    pref.set('halos', on);
+  }
+  $('#btnHalos').addEventListener('click', () => setHalos($('#btnHalos').getAttribute('aria-pressed') !== 'true'));
+  setHalos(pref.get('halos', true));
+
+  let present = false;
+  function setPresent(on) {
+    present = on;
+    document.body.classList.toggle('present', on);
+    $('#btnPresent').textContent = on ? 'Exit' : 'Present';
+    if (on) toast('Presenting. Press Esc to exit.');
+    setTimeout(() => graph.fit(focusSet()), 80);
+  }
+  $('#btnPresent').addEventListener('click', () => setPresent(!present));
+
+  function rasterize(out) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(2, 8000 / Math.max(out.width, out.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(out.width * scale);
+        c.height = Math.round(out.height * scale);
+        const ctx = c.getContext('2d');
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0, out.width, out.height);
+        resolve(c.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('the map could not be drawn'));
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(out.svg);
+    });
+  }
+  $('#btnImage').addEventListener('click', async () => {
+    const area = byId(focusId);
+    const out = graph.toSVG(focusSet(), area ? area.name : '');
+    if (!out) { toast('There is nothing to export yet.', true); return; }
+    try {
+      const png = await rasterize(out);
+      const r = await hub.saveImage({ png, svg: out.svg, name: area ? area.name : 'Hub map' });
+      if (r.ok) toast('Saved ' + r.file.split(/[\\/]/).pop());
+      else if (!r.canceled) toast(r.error || 'Could not save the image.', true);
+    } catch (e) {
+      toast('Could not create the image: ' + e.message, true);
     }
   });
+
+  document.querySelectorAll('#helpDlg .mod').forEach((k) => { k.textContent = OS === 'mac' ? '⌘' : 'Ctrl'; });
+  $('#btnHelp').addEventListener('click', () => $('#helpDlg').showModal());
+  $('#closeHelp').addEventListener('click', () => $('#helpDlg').close());
+  $('#btnLog').addEventListener('click', () => hub.showLog());
   $('#search').placeholder = `Search, then Enter to open (${OS === 'mac' ? '⌘' : 'Ctrl'}+K)`;
 
   // ---------- updates ----------
@@ -621,6 +795,7 @@
   async function reloadFromDisk(quiet) {
     const r = await hub.load();
     applyData(r.data, r.file);
+    markBaseline();
     setStatus('All changes saved');
     if (r.warning) toast(r.warning, true);
     else if (!quiet) toast('Updated from the synced data file.');

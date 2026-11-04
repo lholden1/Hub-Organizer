@@ -146,3 +146,24 @@ dialog h2 { margin: 0 0 14px; font-size: 18px; }
 
 @media (max-width: 1000px) { .app { grid-template-columns: 220px 1fr auto; } .detail { width: 280px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* ---------- map tools, halos, presentation ---------- */
+.tools { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; z-index: 2; }
+.tool { font-size: 12.5px; padding: 5px 10px; background: color-mix(in srgb, var(--surface) 90%, transparent); }
+.tool[aria-pressed=true] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.halo { opacity: 0.12; transition: opacity 0.2s; pointer-events: none; }
+.halo.dim { opacity: 0.03; }
+@media (prefers-color-scheme: dark) { .halo { opacity: 0.18; } }
+.legend button { border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.legend button:hover { text-decoration: underline; }
+kbd { font: 600 11.5px var(--mono); padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--bg); }
+.keys { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0 0 4px; align-items: center; }
+.keys dt { white-space: nowrap; font-weight: 600; }
+.keys dd { margin: 0; color: var(--muted); }
+body.present .bar, body.present .list, body.present .detail, body.present .foot { display: none !important; }
+body.present .app { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+body.present .stage { grid-column: 1; grid-row: 1; }
+body.present .legend { font-size: 14px; padding: 10px 16px; }
+body.present .node .label { font-size: 13.5px; }
+body.present .tools { opacity: 0.35; transition: opacity 0.2s; }
+body.present .tools:hover, body.present .tools:focus-within { opacity: 1; }

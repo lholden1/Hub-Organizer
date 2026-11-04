@@ -14,9 +14,9 @@
       <input id="search" type="search" placeholder="Search, then Enter to open" autocomplete="off" aria-label="Search your items">
       <select id="focus" aria-label="Focus on an area" hidden><option value="">Everything</option></select>
       <div class="bar-actions">
-        <button id="btnAdd" class="primary">Add item</button>
-        <button id="btnTidy">Tidy layout</button>
-        <button id="btnFit">Fit to view</button>
+        <button id="btnAdd" class="primary" title="Add an item (N)">Add item</button>
+        <button id="btnTidy" title="Group each area with its items">Tidy layout</button>
+        <button id="btnFit" title="Show everything (F)">Fit to view</button>
         <button id="btnData">Data</button>
       </div>
     </header>
@@ -26,6 +26,12 @@
     <main class="stage">
       <svg id="graph" role="application" aria-label="Map of your apps and websites. Select an item in the list to see its details."></svg>
       <ul id="legend" class="legend"></ul>
+      <div class="tools" role="toolbar" aria-label="Map tools">
+        <button id="btnHalos" class="tool" aria-pressed="true" title="Show or hide the colored area backgrounds">Backgrounds</button>
+        <button id="btnImage" class="tool" title="Save the map as an image for slides and documents">Export image</button>
+        <button id="btnPresent" class="tool" title="Full-screen map without panels (P)">Present</button>
+        <button id="btnHelp" class="tool" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+      </div>
       <p id="hint" class="hint" hidden></p>
       <div id="empty" class="empty" hidden>
         <h2>Nothing here yet</h2>
@@ -118,8 +124,28 @@
       <button id="btnUpdate">Check for updates</button>
       <button id="btnExport">Export a backup</button>
       <button id="btnImport">Import a backup</button>
+      <button id="btnLog">Show log file</button>
     </div>
     <div class="actions"><button id="closeData" class="primary">Done</button></div>
+  </dialog>
+
+  <dialog id="helpDlg" aria-labelledby="helpTitle">
+    <h2 id="helpTitle">Shortcuts</h2>
+    <dl class="keys">
+      <dt><kbd class="mod">Ctrl</kbd> <kbd>K</kbd></dt><dd>Search (Enter opens the first match)</dd>
+      <dt><kbd>N</kbd></dt><dd>Add an item</dd>
+      <dt><kbd>E</kbd></dt><dd>Edit the selected item</dd>
+      <dt><kbd>Enter</kbd></dt><dd>Open the selected item</dd>
+      <dt><kbd>Delete</kbd></dt><dd>Delete the selected item</dd>
+      <dt><kbd class="mod">Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd>
+      <dt><kbd class="mod">Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></dt><dd>Redo</dd>
+      <dt><kbd>F</kbd></dt><dd>Fit everything in view</dd>
+      <dt><kbd>P</kbd></dt><dd>Presentation mode</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Deselect, cancel connecting, or leave presentation mode</dd>
+      <dt>Double-click</dt><dd>Open an item from the map</dd>
+    </dl>
+    <p class="note">Click an item once and the map glides to center it after a moment. Double-click before then to open it.</p>
+    <div class="actions"><button id="closeHelp" class="primary">Done</button></div>
   </dialog>
 
   <div id="toast" popover="manual" role="status" aria-live="polite"></div>
